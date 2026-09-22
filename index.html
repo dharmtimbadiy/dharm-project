@@ -207,6 +207,11 @@
         <span class="hidden sm:inline">Admin Portal</span>
       </button>
 
+      <button onclick="logoutFarmer()" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-red-500 hover:bg-red-400 text-white text-xs font-bold" title="Log out">
+        <i class="fas fa-right-from-bracket"></i>
+        <span class="hidden sm:inline" id="farmer-logout-label">લૉગ આઉટ</span>
+      </button>
+
     </div>
   </div>
 </header>
@@ -708,6 +713,43 @@ class KisanStore {
 
 const store = new KisanStore();
 
+function ensureEveryCentreHasDemoShops() {
+  const shopPrefixes = ['Khedut Seva', 'Navrang Agro', 'Sahyog Grain', 'Umiya Crop', 'Green Harvest', 'Lok Kalyan'];
+  const usedShopNumbers = new Set(store.centres.flatMap(centre => (centre.shops || []).map(shop => String(shop.shopName || '').match(/(?:Shop|Counter)\s*#?\s*(\d+)/i)?.[1]).filter(Boolean)));
+  let changed = false;
+
+  store.centres.forEach(centre => {
+    if (!centre.shops) centre.shops = [];
+    while (centre.shops.length < 3) {
+      let shopNumber;
+      do {
+        shopNumber = String(Math.floor(10 + Math.random() * 90));
+      } while (usedShopNumbers.has(shopNumber));
+      usedShopNumbers.add(shopNumber);
+
+      const prefix = shopPrefixes[(centre.shops.length + centre.id.charCodeAt(1)) % shopPrefixes.length];
+      const shopId = `${centre.id}-demo-${centre.shops.length + 1}`;
+      const shopName = `${prefix} ${centre.taluka || 'APMC'} Centre (Shop #${shopNumber})`;
+      centre.shops.push({
+        id: shopId,
+        shopName,
+        block: `Demo Block ${centre.shops.length + 1}`,
+        acceptedCrops: DEFAULT_CROPS.slice(0, 4).map(crop => crop.id),
+        maxTokens: 40,
+        allocatedTokens: 0,
+        prices: {},
+        currentQueue: 0,
+        status: 'Available'
+      });
+      changed = true;
+    }
+  });
+
+  return changed;
+}
+
+const seededCentreShopsChanged = ensureEveryCentreHasDemoShops();
+
 if (!store.adminShops.length) {
   store.adminShops = store.centres.flatMap(centre => (centre.shops || []).map(shop => ({
     id: shop.id,
@@ -721,6 +763,25 @@ if (!store.adminShops.length) {
     password: 'demo1234',
     status: 'Active'
   })));
+}
+
+if (seededCentreShopsChanged || store.adminShops.length < store.centres.reduce((total, centre) => total + (centre.shops || []).length, 0)) {
+  const existingAdminShopIds = new Set(store.adminShops.map(shop => shop.id));
+  store.centres.forEach(centre => (centre.shops || []).forEach(shop => {
+    if (existingAdminShopIds.has(shop.id)) return;
+    store.adminShops.push({
+      id: shop.id,
+      shopName: shop.shopName,
+      centreId: centre.id,
+      apmcName: centre.name,
+      adminName: 'Demo Shop Admin',
+      mobile: '9999999999',
+      email: 'demo@example.com',
+      username: `admin_${shop.id.toLowerCase()}`,
+      password: 'demo1234',
+      status: 'Active'
+    });
+  }));
   store.save();
 }
 
@@ -1011,6 +1072,10 @@ const I18N = {
     bookingHistory: 'બુકિંગ ઇતિહાસ',
     nearestMarketYard: 'નજીકની મંડી શોધો',
     nearestMarketYardSubtext: 'ગામ અને જિલ્લા પરથી નજીકની માર્કેટ યાર્ડ શોધો',
+    logout: 'લૉગ આઉટ',
+    chooseCropsAndDate: 'પાક અને તારીખ પસંદ કરો',
+    pastProcurementRecords: 'પાછલા પ્રાપ્તિ રેકોર્ડ',
+    faqsVoiceAssistance: 'વારંવાર પૂછાતા પ્રશ્નો અને વૉઇસ સહાય',
     quantityEntryHint: 'દરેક પસંદ કરેલા પાક માટે જથ્થો અને એકમ પસંદ કરો.',
     quantityUnitKg: 'કિલો',
     quantityUnitQuintal: 'ક્વિન્ટલ',
@@ -1120,6 +1185,10 @@ const I18N = {
     bookingHistory: 'बुकिंग इतिहास',
     nearestMarketYard: 'नजदीकी मंडी खोजें',
     nearestMarketYardSubtext: 'गाँव और जिले के आधार पर नजदीकी मार्केट यार्ड खोजें',
+    logout: 'लॉग आउट',
+    chooseCropsAndDate: 'फसल और तारीख चुनें',
+    pastProcurementRecords: 'पिछले खरीद रिकॉर्ड',
+    faqsVoiceAssistance: 'अक्सर पूछे जाने वाले प्रश्न और वॉइस सहायता',
     quantityEntryHint: 'हर चुनी गई फसल के लिए मात्रा और इकाई चुनें।',
     quantityUnitKg: 'किलो',
     quantityUnitQuintal: 'क्विंटल',
@@ -1229,6 +1298,10 @@ const I18N = {
     bookingHistory: 'My Booking History',
     nearestMarketYard: 'Find Nearest Market Yard',
     nearestMarketYardSubtext: 'Find nearby market yards using your village and district',
+    logout: 'Log out',
+    chooseCropsAndDate: 'Choose crops and date',
+    pastProcurementRecords: 'Past procurement records',
+    faqsVoiceAssistance: 'FAQs and voice assistance',
     quantityEntryHint: 'Choose a quantity and unit for each selected crop.',
     quantityUnitKg: 'Kilograms',
     quantityUnitQuintal: 'Quintals',
@@ -1302,17 +1375,19 @@ const VoiceEngine = {
   isSpeaking: false,
   isListening: false,
   lastUtteranceText: '',
+  speechRequestId: 0,
 
   speak(text, onEnd, language = getFarmerLanguage()) {
+    const requestId = ++this.speechRequestId;
     if (!AppState.speechEnabled) {
       if ('speechSynthesis' in window) window.speechSynthesis.cancel();
       this.isSpeaking = false;
       this.updateVoiceStatusUI(false);
-      if (onEnd) onEnd();
+      if (onEnd && requestId === this.speechRequestId) onEnd();
       return;
     }
     if (!('speechSynthesis' in window)) {
-      if (onEnd) onEnd();
+      if (onEnd && requestId === this.speechRequestId) onEnd();
       return;
     }
 
@@ -1332,12 +1407,14 @@ const VoiceEngine = {
     if (voiceMatch) utterance.voice = voiceMatch;
 
     utterance.onend = () => {
+      if (requestId !== this.speechRequestId) return;
       this.isSpeaking = false;
       this.updateVoiceStatusUI(false);
       if (onEnd) onEnd();
     };
 
     utterance.onerror = () => {
+      if (requestId !== this.speechRequestId) return;
       this.isSpeaking = false;
       this.updateVoiceStatusUI(false);
       if (onEnd) onEnd();
@@ -1345,6 +1422,13 @@ const VoiceEngine = {
 
     this.isSpeaking = true;
     window.speechSynthesis.speak(utterance);
+  },
+
+  cancel() {
+    this.speechRequestId += 1;
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    this.isSpeaking = false;
+    this.updateVoiceStatusUI(false);
   },
 
   listen(onResult, promptText) {
@@ -1665,9 +1749,22 @@ function updateSpeechToggleUI() {
 </div>
 
 <script>
+let farmerPageVoiceVersion = 0;
+
+function speakPage(text, delay = 300, language = getFarmerLanguage()) {
+  const pageVersion = farmerPageVoiceVersion;
+  setTimeout(() => {
+    if (pageVersion !== farmerPageVoiceVersion) return;
+    VoiceEngine.speak(text, null, language);
+  }, delay);
+}
+
 function renderFarmerView() {
   const container = document.getElementById('farmer-content');
   if (!container) return;
+
+  farmerPageVoiceVersion += 1;
+  VoiceEngine.cancel();
 
   updateFarmerLanguageUI();
   updateVoiceHeaderPreview();
@@ -1691,6 +1788,9 @@ function renderFarmerView() {
     case 'reg_confirm':
       renderRegConfirmStep(container);
       break;
+    case 'profile_edit':
+      renderFarmerProfileEditStep(container);
+      break;
     case 'crop_select':
       renderCropSelectStep(container);
       break;
@@ -1702,6 +1802,9 @@ function renderFarmerView() {
       break;
     case 'centre_select':
       renderCentreSelectStep(container);
+      break;
+    case 'shop_select':
+      renderShopSelectStep(container);
       break;
     case 'token_confirm':
       renderTokenConfirmStep(container);
@@ -1830,6 +1933,7 @@ function listenForLanguageVoice() {
 }
 
 function confirmLanguageAndContinue() {
+  AppState.currentFarmer.language = AppState.language;
   AppState.farmerStep = 'reg_mobile';
   renderFarmerView();
 }
@@ -1900,7 +2004,7 @@ function renderRegNameStep(container) {
       </div>
     </div>
   `;
-  setTimeout(() => VoiceEngine.speak(q), 300);
+  speakPage(q);
 }
 
 function listenForFarmerName() {
@@ -1966,7 +2070,7 @@ function renderRegTalukaStep(container) {
       </div>
     </div>
   `;
-  setTimeout(() => VoiceEngine.speak(q), 300);
+  speakPage(q);
 }
 
 function listenForFarmerTaluka() {
@@ -2070,7 +2174,7 @@ function renderRegMobileStep(container) {
       </div>
     </div>
   `;
-  setTimeout(() => VoiceEngine.speak(q), 300);
+  speakPage(q);
 }
 
 function listenForFarmerMobile() {
@@ -2141,7 +2245,7 @@ function renderOtpStep(container) {
     </div>
   `;
 
-  setTimeout(() => VoiceEngine.speak(otpPrompt + '. OTP is 1234.'), 300);
+  speakPage(otpPrompt + '. OTP is 1234.');
 }
 
 function verifyFarmerOtp() {
@@ -2449,10 +2553,12 @@ function getNearbyMarketYardsForFarmer() {
 function selectMarketYardForProcurement(mandiName) {
   const yard = mandiData.find(item => item.mandiName === mandiName || getMandiDisplayName(item) === mandiName);
   if (!yard) return;
-  const existing = store.centres.find(centre => centre.marketYardName === yard.mandiName);
+  const existing = getCentreForMarketYard(yard);
   if (existing) {
     AppState.currentFarmer.selectedCentreId = existing.id;
-    generateTokenForSelectedCentre();
+    AppState.currentFarmer.selectedShopId = '';
+    AppState.farmerStep = 'shop_select';
+    renderFarmerView();
     return;
   }
 
@@ -2477,7 +2583,22 @@ function selectMarketYardForProcurement(mandiName) {
   };
   store.centres.push(centre);
   AppState.currentFarmer.selectedCentreId = centre.id;
-  generateTokenForSelectedCentre();
+  AppState.currentFarmer.selectedShopId = '';
+  AppState.farmerStep = 'shop_select';
+  renderFarmerView();
+}
+
+function getCentreForMarketYard(yard) {
+  const normalize = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const yardName = normalize(yard?.mandiName);
+  const yardVillage = normalize(yard?.village);
+  const yardTaluka = normalize(yard?.taluka);
+  return store.centres.find(centre => normalize(centre.marketYardName) === yardName)
+    || store.centres.find(centre => {
+      const centreName = normalize(centre.name);
+      return centreName.includes(yardVillage) && (!yardTaluka || normalize(centre.taluka).includes(yardTaluka));
+    })
+    || store.centres.find(centre => centre.id === yard?.centreId);
 }
 
 function centreIdForYard(yard) {
@@ -2623,7 +2744,7 @@ function renderCropSelectStep(container) {
     </div>
   `;
 
-  setTimeout(() => VoiceEngine.speak(q), 300);
+  speakPage(q);
 }
 
 function toggleCropSelection(cropId) {
@@ -2757,7 +2878,7 @@ function renderWeightSelectStep(container) {
     </div>
   `;
 
-  setTimeout(() => VoiceEngine.speak(q), 300);
+  speakPage(q);
 }
 
 function setWeight(w) {
@@ -2929,7 +3050,7 @@ function renderDateSelectStep(container) {
     </div>
   `;
 
-  setTimeout(() => VoiceEngine.speak(q), 300);
+  speakPage(q);
 }
 
 function handleDatePickerChange(val) {
@@ -3155,7 +3276,7 @@ function renderCentreSelectStep(container) {
       <button onclick="AppState.currentFarmer.selectedMarketCity=''; renderFarmerView();" class="w-full py-3 rounded-xl bg-stone-200 text-stone-800 font-bold text-sm">${t('back')}</button>
     </div>`;
 
-  setTimeout(() => VoiceEngine.speak('Select city and APMC market yard'), 300);
+  speakPage('Select city and APMC market yard');
   return;
 
   const farmerLat = AppState.currentFarmer.lat || 22.9868;
@@ -3263,7 +3384,7 @@ function renderCentreSelectStep(container) {
     </div>
   `;
 
-  setTimeout(() => VoiceEngine.speak(t('centresTitle')), 300);
+  speakPage(t('centresTitle'));
 }
 
 function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -3279,13 +3400,76 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
 
 function selectProcurementCentre(centreId) {
   AppState.currentFarmer.selectedCentreId = centreId;
-  generateTokenForSelectedCentre();
+  AppState.currentFarmer.selectedShopId = '';
+  AppState.farmerStep = 'shop_select';
+  renderFarmerView();
+}
+
+function getFarmerShopsForCentre(centre) {
+  if (!centre) return [];
+
+  const shops = [...(centre.shops || [])];
+  const shopIds = new Set(shops.map(shop => shop.id));
+  (store.adminShops || [])
+    .filter(shop => shop.centreId === centre.id && !shopIds.has(shop.id))
+    .forEach(shop => shops.push({
+      ...shop,
+      acceptedCrops: shop.acceptedCrops || Object.keys(shop.crops || {}),
+      maxTokens: shop.maxTokens || shop.capacity || 0,
+      allocatedTokens: shop.allocatedTokens || 0,
+      currentQueue: shop.currentQueue || 0,
+      status: shop.status === 'Inactive' ? 'Closed' : (shop.status || 'Available')
+    }));
+
+  return shops;
+}
+
+function renderShopSelectStep(container) {
+  const centre = store.centres.find(item => item.id === AppState.currentFarmer.selectedCentreId);
+  const shops = getFarmerShopsForCentre(centre).filter(shop => shop.status !== 'Closed');
+  const visibleShops = shops;
+
+  container.innerHTML = `
+    <div class="max-w-3xl mx-auto w-full space-y-5">
+      <div class="space-y-1">
+        <span class="text-xs font-bold bg-green-100 text-brand-800 px-3 py-1 rounded-full">${centre?.name || 'APMC Market'}</span>
+        <h2 class="text-xl sm:text-2xl font-extrabold text-stone-900 pt-2 leading-snug">${t('shopsTitle')}</h2>
+        <p class="text-xs sm:text-sm text-stone-500">${t('shopsSubtext')}</p>
+      </div>
+      <div class="space-y-3">
+        ${visibleShops.map(shop => `
+          <div class="bg-white rounded-2xl p-4 border-2 border-stone-200 shadow-sm flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 class="font-black text-stone-900">${shop.shopName}</h3>
+              <p class="text-xs text-stone-500 mt-1">${shop.block || 'Main Counter'} • ${shop.currentQueue || 0} waiting</p>
+              <p class="text-xs text-brand-700 font-bold mt-1">${(shop.acceptedCrops || []).map(getCropName).join(', ') || 'All selected crops'}</p>
+            </div>
+            <button onclick="selectFarmerShop('${shop.id}')" class="px-4 py-2.5 rounded-xl bg-brand-700 hover:bg-brand-800 text-white font-extrabold text-xs shadow-md">${t('selectShop')}</button>
+          </div>`).join('') || '<div class="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-900">No shops are currently available in this APMC market.</div>'}
+      </div>
+      <button onclick="AppState.farmerStep='centre_select'; renderFarmerView();" class="w-full py-3 rounded-xl bg-stone-200 text-stone-800 font-bold text-sm">${t('back')}</button>
+    </div>`;
+}
+
+function selectFarmerShop(shopId) {
+  const centre = store.centres.find(item => item.id === AppState.currentFarmer.selectedCentreId);
+  let shop = getFarmerShopsForCentre(centre).find(item => item.id === shopId);
+  if (!shop) {
+    showToast('This shop is no longer available. Please select the market again.', 'warn');
+    return;
+  }
+  if (!centre.shops.some(item => item.id === shop.id)) {
+    centre.shops.push(shop);
+  }
+  AppState.currentFarmer.selectedShopId = shop.id;
+  generateDigitalToken();
 }
 
 function generateTokenForSelectedCentre() {
   const centre = store.centres.find(c => c.id === AppState.currentFarmer.selectedCentreId) || store.centres[0];
   const selectedCrops = AppState.currentFarmer.selectedCrops || [];
-  const shop = (centre.shops || []).find(item => selectedCrops.some(cropId => item.acceptedCrops.includes(cropId))) || centre.shops[0];
+  const shops = getFarmerShopsForCentre(centre);
+  const shop = shops.find(item => selectedCrops.some(cropId => (item.acceptedCrops || []).includes(cropId))) || shops[0];
   if (!shop) {
     showToast('No procurement counter is available at this centre.', 'warn');
     return;
@@ -3297,8 +3481,15 @@ function generateTokenForSelectedCentre() {
 // 12. TOKEN GENERATION
 function generateDigitalToken() {
   const f = AppState.currentFarmer;
-  const centre = store.centres.find(c => c.id === f.selectedCentreId) || store.centres[0];
-  const shop = centre.shops.find(s => s.id === f.selectedShopId) || centre.shops[0];
+  const centre = store.centres.find(c => c.id === f.selectedCentreId);
+  const shop = getFarmerShopsForCentre(centre).find(s => s.id === f.selectedShopId && s.status !== 'Closed');
+  if (!centre || !shop) {
+    AppState.currentFarmer.selectedShopId = '';
+    AppState.farmerStep = 'shop_select';
+    showToast('Please select an available shop in the selected APMC market.', 'warn');
+    renderFarmerView();
+    return;
+  }
 
   const randomSuffix = Math.floor(20 + Math.random() * 50);
   const tokenNum = 'A-0' + randomSuffix;
@@ -3461,7 +3652,7 @@ function renderTokenConfirmStep(container) {
     : (language === 'hi'
         ? `आपका टोकन नंबर ${localizeDigits(b.tokenNumber)} है। केंद्र: ${b.centreName}। दुकान: ${b.shopName}। तारीख ${localizeDigits(b.date)} है। मात्रा ${b.quantity} है। आपसे आगे ${localizeDigits(b.tokensBefore)} किसान हैं और अनुमानित प्रतीक्षा समय ${localizeDigits(45)} मिनट है।`
         : `Your token number is ${b.tokenNumber}. Centre: ${b.centreName}. Shop: ${b.shopName}. Reporting date is ${b.date}. Approximate quantity is ${b.quantity}. There are ${b.tokensBefore} farmers ahead of you and the estimated waiting time is 45 minutes.`);
-  setTimeout(() => VoiceEngine.speak(readout, null, language), 400);
+  speakPage(readout, 400, language);
 }
 
 // 14. LIVE TRACKING
@@ -3632,8 +3823,74 @@ function handleFarmerEditBooking() {
   renderFarmerView();
 }
 
+function renderFarmerProfileEditStep(container) {
+  const f = AppState.currentFarmer;
+  const title = AppState.language === 'gu' ? 'વ્યક્તિગત વિગતો' : (AppState.language === 'hi' ? 'व्यक्तिगत विवरण' : 'Personal Details');
+  const saveLabel = AppState.language === 'gu' ? 'સાચવો' : (AppState.language === 'hi' ? 'सहेजें' : 'Save');
+  const cancelLabel = t('back');
+
+  container.innerHTML = `
+    <div class="max-w-md mx-auto w-full space-y-5">
+      <div>
+        <span class="text-xs font-bold bg-green-100 text-brand-800 px-3 py-1 rounded-full">${title}</span>
+        <h2 class="text-xl sm:text-2xl font-extrabold text-stone-900 mt-3">${title}</h2>
+      </div>
+
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs font-bold text-stone-500 mb-1 uppercase">${t('fullName')}</label>
+          <input type="text" id="profile-name-input" value="${f.name || ''}" class="w-full px-4 py-3 rounded-2xl border border-stone-300 text-base font-semibold focus:ring-2 focus:ring-brand-600 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-stone-500 mb-1 uppercase">${t('village')}</label>
+          <input type="text" id="profile-village-input" value="${f.village || ''}" class="w-full px-4 py-3 rounded-2xl border border-stone-300 text-base font-semibold focus:ring-2 focus:ring-brand-600 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-stone-500 mb-1 uppercase">${t('taluka')}</label>
+          <input type="text" id="profile-taluka-input" value="${f.taluka || ''}" class="w-full px-4 py-3 rounded-2xl border border-stone-300 text-base font-semibold focus:ring-2 focus:ring-brand-600 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-stone-500 mb-1 uppercase">District</label>
+          <input type="text" id="profile-district-input" value="${f.district || ''}" class="w-full px-4 py-3 rounded-2xl border border-stone-300 text-base font-semibold focus:ring-2 focus:ring-brand-600 focus:outline-none">
+        </div>
+      </div>
+
+      <div class="flex gap-3 pt-2">
+        <button onclick="AppState.farmerStep='dashboard'; renderFarmerView();" class="w-1/3 py-3 rounded-xl bg-stone-200 text-stone-800 font-bold text-sm">${cancelLabel}</button>
+        <button onclick="saveFarmerProfileEdit()" class="w-2/3 py-3 rounded-xl bg-brand-700 hover:bg-brand-800 text-white font-bold text-sm shadow-md">${saveLabel}</button>
+      </div>
+    </div>
+  `;
+}
+
+function saveFarmerProfileEdit() {
+  const fields = {
+    name: document.getElementById('profile-name-input')?.value.trim() || '',
+    village: document.getElementById('profile-village-input')?.value.trim() || '',
+    taluka: document.getElementById('profile-taluka-input')?.value.trim() || '',
+    district: document.getElementById('profile-district-input')?.value.trim() || ''
+  };
+
+  if (Object.values(fields).some(value => !value)) {
+    showToast('Please complete all Personal Details fields.', 'warn');
+    return;
+  }
+
+  Object.assign(AppState.currentFarmer, fields);
+  const existingFarmer = store.farmers.find(farmer => farmer.id === AppState.currentFarmer.id);
+  if (existingFarmer) {
+    Object.assign(existingFarmer, fields);
+    store.save();
+  }
+
+  showToast('Profile updated successfully.', 'success');
+  AppState.farmerStep = 'dashboard';
+  renderFarmerView();
+}
+
 // 15. DASHBOARD
 function renderFarmerDashboard(container) {
+  AppState.language = getFarmerLanguage();
   const f = AppState.currentFarmer;
   const active = f.activeBooking ? (store.tokens.find(t => t.tokenId === f.activeBooking.tokenId) || f.activeBooking) : null;
 
@@ -3704,7 +3961,7 @@ function renderFarmerDashboard(container) {
           <h2 class="text-2xl font-black text-stone-900 mt-0.5">${t('hello')}, ${f.name || 'Ramesh Patel'}!</h2>
           <p class="text-xs text-stone-500">${f.village || 'Sanand'}, તા. ${f.taluka || 'Sanand'}, ${f.mobile || '9825101234'}</p>
         </div>
-        <button onclick="AppState.farmerStep='reg_name'; renderFarmerView();" class="p-2 rounded-xl bg-stone-100 text-stone-700 hover:bg-stone-200 text-xs font-bold" title="Edit Profile">
+        <button onclick="AppState.farmerStep='profile_edit'; renderFarmerView();" class="p-2 rounded-xl bg-stone-100 text-stone-700 hover:bg-stone-200 text-xs font-bold" title="Edit Profile">
           <i class="fas fa-user-pen"></i>
         </button>
       </div>
@@ -3715,13 +3972,13 @@ function renderFarmerDashboard(container) {
         <button onclick="AppState.farmerStep='crop_select'; renderFarmerView();" class="p-4 rounded-2xl bg-white border border-stone-200 hover:border-brand-400 shadow-sm text-left transition">
           <i class="fas fa-cart-plus text-brand-600 text-lg mb-2 block"></i>
           <span class="text-xs font-extrabold text-stone-900 block">${t('bookNewCrop')}</span>
-          <span class="text-[10px] text-stone-500">Choose crops & date</span>
+          <span class="text-[10px] text-stone-500">${t('chooseCropsAndDate')}</span>
         </button>
 
         <button onclick="AppState.farmerStep='history'; renderFarmerView();" class="p-4 rounded-2xl bg-white border border-stone-200 hover:border-brand-400 shadow-sm text-left transition">
           <i class="fas fa-clock-rotate-left text-blue-600 text-lg mb-2 block"></i>
           <span class="text-xs font-extrabold text-stone-900 block">${t('bookingHistory')}</span>
-          <span class="text-[10px] text-stone-500">Past procurement records</span>
+          <span class="text-[10px] text-stone-500">${t('pastProcurementRecords')}</span>
         </button>
 
         <button onclick="beginMandiSearch()" class="p-4 rounded-2xl bg-amber-50 border border-amber-200 hover:border-amber-400 shadow-sm text-left transition col-span-2 sm:col-span-1">
@@ -3733,7 +3990,7 @@ function renderFarmerDashboard(container) {
         <button onclick="openHelpModal()" class="p-4 rounded-2xl bg-white border border-stone-200 hover:border-brand-400 shadow-sm text-left transition col-span-2 sm:col-span-1">
           <i class="fas fa-headset text-amber-600 text-lg mb-2 block"></i>
           <span class="text-xs font-extrabold text-stone-900 block">${t('help')}</span>
-          <span class="text-[10px] text-stone-500">FAQs & Voice Assistance</span>
+          <span class="text-[10px] text-stone-500">${t('faqsVoiceAssistance')}</span>
         </button>
       </div>
     </div>
@@ -4499,12 +4756,19 @@ function loginShopAdmin(event) {
 }
 
 function getAdminCentre() {
-  return store.centres.find(centre => centre.name === AppState.adminMandiName) || store.centres.find(centre => centre.id === mandiData.find(mandi => mandi.mandiName === AppState.adminMandiName)?.centreId) || store.centres[0];
+  const yard = mandiData.find(mandi => mandi.mandiName === AppState.adminMandiName);
+  return store.centres.find(centre => centre.name === AppState.adminMandiName)
+    || getCentreForMarketYard(yard)
+    || store.centres[0];
 }
 
 function getAdminTokens() {
   const centre = getAdminCentre();
-  return (store.tokens || []).filter(token => !centre || token.centreId === centre.id || token.centreName === centre.name);
+  const selectedShopId = AppState.adminRole === 'SHOP_ADMIN' ? AppState.adminSelectedShopId : '';
+  return (store.tokens || []).filter(token => {
+    const belongsToCentre = !centre || token.centreId === centre.id || token.centreName === centre.name;
+    return belongsToCentre && (!selectedShopId || token.shopId === selectedShopId);
+  });
 }
 
 function setAdminRole(role) {
@@ -4680,6 +4944,25 @@ function saveShopCapacity(shopId) {
   renderFarmerView();
 }
 
+function saveShopAdminProfile(shopId) {
+  const shop = getShopRecord(shopId);
+  const shopName = document.getElementById(`shop-profile-name-${shopId}`)?.value.trim();
+  const adminName = document.getElementById(`shop-profile-admin-${shopId}`)?.value.trim();
+  if (!shop || !shopName || !adminName) {
+    showToast('Shop name and farmer name are required', 'warn');
+    return;
+  }
+
+  shop.shopName = shopName;
+  shop.adminName = adminName;
+  const centre = getShopCentre(shop);
+  const centreShop = centre?.shops.find(item => item.id === shopId);
+  if (centreShop) centreShop.shopName = shopName;
+  store.save();
+  showToast('Shop profile updated successfully', 'success');
+  renderFarmerView();
+}
+
 function filterAdminTable(query, selector) { const value = (query || '').toLowerCase(); document.querySelectorAll(selector).forEach(row => { row.style.display = row.innerText.toLowerCase().includes(value) ? '' : 'none'; }); }
 
 function renderSuperAdminPage(page) {
@@ -4725,7 +5008,10 @@ function renderShopAdminPage(page) {
   const shop = getLoggedInShop();
   const shopCentreRecord = centre?.shops.find(item => item.id === shop?.id);
   const tokens = getAdminTokens();
-  const completed = (store.bookingHistory || []).filter(item => (item.centreId === centre?.id || item.centreName === centre?.name) && item.status === 'Completed');
+  const completed = (store.bookingHistory || []).filter(item => {
+    const belongsToCentre = item.centreId === centre?.id || item.centreName === centre?.name;
+    return belongsToCentre && item.status === 'Completed' && (!shop?.id || item.shopId === shop.id);
+  });
   const quantity = completed.reduce((sum, item) => sum + (Number(item.quantityKg) || getQuantityKg(item.quantity)), 0);
   const amount = completed.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   if (page === 'dashboard') {
@@ -4891,7 +5177,7 @@ function renderShopAdminPage(page) {
   }
 
   if (page === 'notifications') return `<div class="space-y-5"><h2 class="text-2xl font-black">Notifications</h2><div class="bg-white rounded-2xl border border-stone-200 p-5 text-sm">${tokens.filter(item => item.status === 'Waiting').length} farmer(s) waiting at this centre.</div></div>`;
-  if (page === 'profile') return `<div class="space-y-5"><h2 class="text-2xl font-black">Shop Admin Profile</h2><div class="bg-white rounded-2xl border border-stone-200 p-5 text-sm space-y-2"><p><b>Name:</b> ${shop?.adminName || 'Shop Admin'}</p><p><b>Mobile:</b> ${shop?.mobile || '-'}</p><p><b>Shop:</b> ${shop?.shopName || '-'}</p><p><b>APMC Market:</b> ${centre?.name || '-'}</p><p><b>Status:</b> ${shop?.status || 'Active'}</p></div></div>`;
+  if (page === 'profile') return `<div class="space-y-5"><div><h2 class="text-2xl font-black">Shop Admin Profile</h2><p class="text-sm text-stone-500 mt-1">Update only your shop name and farmer name.</p></div><div class="bg-white rounded-2xl border border-stone-200 p-5 space-y-4"><div class="grid grid-cols-1 sm:grid-cols-2 gap-4"><label class="block text-sm font-bold text-stone-700">Shop name<input id="shop-profile-name-${shop?.id || ''}" value="${shop?.shopName || ''}" class="mt-2 w-full px-3 py-2 rounded-xl border border-stone-300" maxlength="120"></label><label class="block text-sm font-bold text-stone-700">Farmer name<input id="shop-profile-admin-${shop?.id || ''}" value="${shop?.adminName || ''}" class="mt-2 w-full px-3 py-2 rounded-xl border border-stone-300" maxlength="80"></label></div><button onclick="saveShopAdminProfile('${shop?.id || ''}')" class="px-4 py-2 rounded-xl bg-brand-700 hover:bg-brand-800 text-white font-bold"><i class="fas fa-save mr-1"></i>Save profile</button></div><div class="bg-white rounded-2xl border border-stone-200 p-5 text-sm space-y-2"><p><b>Mobile:</b> ${shop?.mobile || '-'}</p><p><b>APMC Market:</b> ${centre?.name || '-'}</p><p><b>Status:</b> ${shop?.status || 'Active'}</p></div></div>`;
   return `<div class="space-y-5"><div><span class="text-xs font-black uppercase text-amber-700">Daily operations</span><h2 class="text-2xl font-black mt-1">Shop Admin Dashboard</h2><p class="text-sm text-stone-500 mt-1">${centre?.name || 'Assigned centre'}</p></div><div class="grid grid-cols-2 xl:grid-cols-4 gap-3">${adminKpi("Today's Farmers", tokens.length)}${adminKpi("Today's Crops Sold", completed.reduce((sum, item) => sum + (item.crops || []).length, 0), 'green')}${adminKpi("Today's Quantity", `${quantity.toFixed(0)} kg`, 'blue')}${adminKpi("Today's Amount", `₹${amount.toLocaleString('en-IN')}`, 'amber')}${adminKpi('Active Tokens', tokens.filter(item => !['Completed', 'Cancelled'].includes(item.status)).length, 'amber')}${adminKpi('Waiting Farmers', tokens.filter(item => item.status === 'Waiting').length, 'red')}${adminKpi('Completed Transactions', completed.length, 'green')}</div></div>`;
 }
 
@@ -5097,12 +5383,14 @@ function updateLanguageDisplay() {
 function updateFarmerLanguageUI() {
   const title = document.getElementById('portal-title');
   const tagline = document.getElementById('portal-tagline');
+  const logout = document.getElementById('farmer-logout-label');
   const speak = document.getElementById('va-speak-label');
   const listen = document.getElementById('va-listen-label');
   const back = document.getElementById('va-back-label');
   const help = document.getElementById('va-help-label');
   if (title) title.textContent = t('portalTitle');
   if (tagline) tagline.textContent = t('tagline');
+  if (logout) logout.textContent = t('logout');
   if (speak) speak.textContent = t('speakBtn');
   if (listen) listen.textContent = t('listenAgain');
   if (back) back.textContent = t('back');
@@ -5153,6 +5441,33 @@ function goToHome() {
   renderFarmerView();
 }
 
+function logoutFarmer() {
+  const language = AppState.language;
+  Object.assign(AppState.currentFarmer, {
+    id: 'F1021',
+    name: '',
+    village: '',
+    taluka: '',
+    district: 'Ahmedabad',
+    lat: 22.9868,
+    lng: 72.3820,
+    mobile: '',
+    language,
+    selectedCrops: ['wheat'],
+    approxWeight: '500–1000 kg',
+    cropQuantities: {},
+    cropQuantityUnits: {},
+    procurementDate: '',
+    selectedCentreId: 'c1',
+    selectedShopId: 's101',
+    selectedMarketCity: '',
+    activeBooking: null
+  });
+  AppState.farmerStep = 'language';
+  AppState.mandiSearch = { village: '', taluka: '', district: '', crop: '', location: null, results: [], selectedMandi: null };
+  renderFarmerView();
+}
+
 function openModal(id) {
   const el = document.getElementById(id);
   if (el) {
@@ -5161,7 +5476,7 @@ function openModal(id) {
   }
 }
 
-function closeModal(id) {
+function closeModal(id) { 
   const el = document.getElementById(id);
   if (el) {
     el.classList.add('hidden');
